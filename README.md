@@ -36,10 +36,11 @@ chapters, prefetching of the next ones, and reading progress kept in sync with t
 
 ## Requirements
 
-- KOReader. Tested with v2026.07.2 on a PocketBook InkPad X, and in the KOReader emulator (v2025.10). Other
-  devices should work, the code only uses KOReader's own APIs (plus the optional PocketBook-specific loopback
-  trick of the VPN add-on).
-- A Suwayomi server reachable from the e-reader (tested with v2.4.2366), using its GraphQL API.
+- KOReader. Developed on a PocketBook InkPad X running KOReader v2026.07.2. This public build was verified in the
+  KOReader emulator (v2025.10) against a fake server, and with the unit tests in `tests/`. It has not been tried
+  on other devices yet. It should work elsewhere, since the code only uses KOReader's own APIs (plus the optional
+  PocketBook-specific loopback trick of the VPN add-on): bug reports are welcome.
+- A Suwayomi server reachable from the e-reader, using its GraphQL API (developed against v2.4.2366).
 - **The chapters must be downloaded on the Suwayomi server.** The plugin asks Suwayomi for the CBZ file of a
   chapter, and Suwayomi refuses chapters it has not downloaded (the plugin then says so). Turn on automatic
   download of new chapters in Suwayomi, or download chapters from its web interface.
