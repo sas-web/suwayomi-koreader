@@ -1,0 +1,14 @@
+# WireGuard profiles hold a private key: never commit them
+*.conf
+# the wireproxy program is a separate project, downloaded by each user
+wireproxy
+wireproxy.log
+wireproxy.pid
+
+# runtime and editor leftovers
+settings/
+*.log
+*.pid
+.DS_Store
+Thumbs.db
+__pycache__/
