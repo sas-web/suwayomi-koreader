@@ -22,6 +22,7 @@ local Mosaic = require("suwayomi_mosaic")
 local Prefetch = require("suwayomi_prefetch")
 local Reader = require("suwayomi_reader")
 local SeriesView = require("suwayomi_series")
+local ServerDownload = require("suwayomi_serverdl")
 local _ = require("suwayomi_i18n")
 
 -- KOReader's own catalogue: only for the generic words it already translates in every language.
@@ -164,9 +165,9 @@ local function withMessage(text, fn)
     local message = InfoMessage:new({ text = text })
     UIManager:show(message)
     UIManager:forceRePaint()
-    local a, b = fn()
+    local a, b, c = fn()
     UIManager:close(message)
-    return a, b
+    return a, b, c
 end
 
 local function showError(text)
@@ -234,6 +235,11 @@ local function cleanup(ctx, index)
     end
 end
 
+--- Does the plugin ask the server to download chapters it lacks? (setting "server_download", on by default)
+local function serverDownloadEnabled()
+    return settings:readSetting("server_download") ~= false
+end
+
 -- Prefetching of the next chapters while reading (see suwayomi_prefetch.lua): one download at a time in a
 -- subprocess. It wakes the Wi-Fi up itself if it was turned off, and then rechecks the route to Suwayomi
 -- (home or VPN tunnel), because the network may have changed.
@@ -250,7 +256,90 @@ local prefetcher = Prefetch.new({
     download = function(chapter_id, path) return Api:downloadChapter(chapter_id, path) end,
     hasPendingProgress = hasPendingProgress,
     flushPendingProgress = flushPendingProgress,
+    -- Which of the next chapters does the server have, and a request for the ones it lacks. With the setting off
+    -- (or no answer) the prefetcher simply tries to download them, as before.
+    serverHas = function(ids)
+        if not serverDownloadEnabled() then return nil end
+        return Api:chaptersDownloaded(ids, 5)
+    end,
+    requestServer = function(ids)
+        local requested, err = Api:requestDownloads(ids, false)
+        if not requested then logger.warn("Suwayomi: could not ask the server for chapters:", tostring(err)) end
+        return requested
+    end,
+    now = os.time,
 })
+
+local serverdl = ServerDownload.new({ UIManager = UIManager, api = Api, now = os.time })
+
+--- Message for a failed wait for the server's download.
+local function serverDownloadError(reason, detail)
+    if reason == "failed" then
+        return string.format(_("The server could not download this chapter (%d tries). The source may be unavailable."),
+            tonumber(detail) or 0)
+    elseif reason == "timeout" then
+        return _("The server is taking too long to download this chapter. It may still be working: try again in a moment.")
+    elseif reason == "idle" then
+        return _("The server dropped this chapter from its download queue. Check the downloads in Suwayomi.")
+    elseif reason == "unreachable" then
+        return _("Lost contact with the server while waiting.") .. "\n" .. tostring(detail)
+    end
+    return _("Could not ask the server to download this chapter:") .. "\n" .. tostring(detail)
+end
+
+--- Asks the server to download a chapter it does not have, shows how far it is, and calls `on_ready` once the
+--- chapter can be fetched. Tapping the message cancels the wait (the server carries on by itself).
+local function waitForServerDownload(chapter, on_ready)
+    local message, handle, last_text
+    local finished = false
+
+    local function closeMessage()
+        if message then
+            message.dismiss_callback = nil -- closing it ourselves is not a cancellation
+            UIManager:close(message)
+            message = nil
+        end
+    end
+    local function show(text)
+        if text == last_text then return end -- spare the e-ink screen
+        last_text = text
+        closeMessage()
+        message = InfoMessage:new({
+            text = text,
+            dismiss_callback = function()
+                finished = true
+                message = nil
+                if handle then handle:cancel() end
+            end,
+        })
+        UIManager:show(message)
+    end
+
+    show(_("Asking the server to download this chapter…") .. "\n" .. chapterTitle(chapter))
+    UIManager:forceRePaint()
+    handle = serverdl:request(chapter.id, {
+        on_update = function(info)
+            if finished then return end
+            if info.state == "DOWNLOADING" then
+                -- steps of 10% only: every change redraws the message
+                show(string.format(_("The server is downloading this chapter: %d%%\nTap to cancel."),
+                    math.floor(info.progress * 10) * 10))
+            else
+                show(_("The server has queued this chapter…\nTap to cancel."))
+            end
+        end,
+        on_done = function(ok, reason, detail)
+            if finished then return end
+            finished = true
+            closeMessage()
+            if ok then
+                on_ready()
+            else
+                showError(serverDownloadError(reason, detail) .. serverFooter())
+            end
+        end,
+    })
+end
 
 local Suwayomi = WidgetContainer:extend({
     name = "suwayomi",
@@ -259,8 +348,9 @@ local Suwayomi = WidgetContainer:extend({
 
 local openChapter, showLibrary, showSeries
 
---- Downloads if needed, then opens chapter `index` of `ctx.chapters` in the reader.
-openChapter = function(ctx, index, start_override, online)
+--- Downloads if needed, then opens chapter `index` of `ctx.chapters` in the reader. `asked` says that the
+--- server was already asked to download the chapter (no second round if it still refuses it).
+openChapter = function(ctx, index, start_override, online, asked)
     local chapter = ctx.chapters[index]
     local path = chapterPath(ctx.series.title, chapter)
 
@@ -278,17 +368,22 @@ openChapter = function(ctx, index, start_override, online)
 
     if lfs.attributes(path, "mode") ~= "file" then
         mkdirs(path:match("^(.*)/[^/]+$"))
-        local ok, err = withMessage(
+        local ok, err, code = withMessage(
             _("Downloading…") .. "\n" .. ctx.series.title .. "\n" .. chapterTitle(chapter),
             function()
-                local file, e = Api:downloadChapter(chapter.id, path)
-                if not file then
+                local file, e, c = Api:downloadChapter(chapter.id, path)
+                if not file and c ~= "not_downloaded" then
                     socket.sleep(1.5) -- try again: the Wi-Fi may have just woken up
-                    file, e = Api:downloadChapter(chapter.id, path)
+                    file, e, c = Api:downloadChapter(chapter.id, path)
                 end
-                return file, e
+                return file, e, c
             end)
         if not ok then
+            if code == "not_downloaded" and not asked and serverDownloadEnabled() then
+                -- The server does not have this chapter: ask it to download it, then come back here.
+                waitForServerDownload(chapter, function() openChapter(ctx, index, start_override, true, true) end)
+                return
+            end
             showError(_("Download failed:") .. "\n" .. tostring(err) .. serverFooter())
             return
         end
@@ -691,6 +786,17 @@ local function showSettings()
             end,
         }},
     }
+    table.insert(buttons, {{
+        text = (serverDownloadEnabled()
+            and _("Ask the server to download missing chapters: yes")
+            or _("Ask the server to download missing chapters: no")),
+        callback = function()
+            close()
+            settings:saveSetting("server_download", not serverDownloadEnabled())
+            settings:flush()
+            showSettings() -- reopen the dialog with the new state
+        end,
+    }})
     if has_vpn then
         for _i, row in ipairs(vpnRows(close)) do table.insert(buttons, row) end
     end

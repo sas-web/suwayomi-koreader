@@ -1,11 +1,12 @@
 # Tests
 
-Three standalone Lua scripts, run with the LuaJIT shipped with KOReader. They need no device and no Suwayomi
+Four standalone Lua scripts, run with the LuaJIT shipped with KOReader. They need no device and no Suwayomi
 server: every dependency (network, scheduler, file system, server) is replaced by a stand-in.
 
 | Script | Checks |
 | --- | --- |
-| `prefetch_test.lua` | Prefetching: chaining, Wi-Fi wake-up, retries, pending progress sent when the Wi-Fi is on |
+| `prefetch_test.lua` | Prefetching: chaining, Wi-Fi wake-up, retries, pending progress sent when the Wi-Fi is on, chapters the server lacks are requested and checked again later |
+| `serverdl_test.lua` | Waiting for the server to download a chapter: progress, failures, time-out, cancellation, restart of a stopped download manager |
 | `vpn_route_test.lua` | VPN add-on: home / tunnel route choice, tunnel reuse, profile handling |
 | `i18n_test.lua` | Language selection, English fallback, every text has a French entry with the same `%` markers |
 
@@ -17,6 +18,7 @@ or the emulator build). From KOReader's base folder, with the plugin installed u
 
 ```
 ./luajit /path/to/tests/prefetch_test.lua
+./luajit /path/to/tests/serverdl_test.lua
 ./luajit /path/to/tests/vpn_route_test.lua
 ./luajit /path/to/tests/i18n_test.lua
 ```

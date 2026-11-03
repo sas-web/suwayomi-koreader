@@ -66,6 +66,21 @@ return {
     ["Suwayomi: chapter list"] = "Suwayomi : liste des chapitres",
     ["Suwayomi: next chapter"] = "Suwayomi : chapitre suivant",
     ["Suwayomi: resume reading"] = "Suwayomi : reprendre la lecture",
+    ["Ask the server to download missing chapters: yes"] = "Demander au serveur de télécharger les chapitres manquants : oui",
+    ["Ask the server to download missing chapters: no"] = "Demander au serveur de télécharger les chapitres manquants : non",
+    ["Asking the server to download this chapter…"] = "Demande au serveur de télécharger ce chapitre…",
+    ["The server is downloading this chapter: %d%%\nTap to cancel."] =
+        "Le serveur télécharge ce chapitre : %d%%\nToucher pour annuler.",
+    ["The server has queued this chapter…\nTap to cancel."] =
+        "Le serveur a mis ce chapitre en file d'attente…\nToucher pour annuler.",
+    ["The server could not download this chapter (%d tries). The source may be unavailable."] =
+        "Le serveur n'a pas réussi à télécharger ce chapitre (%d essais). La source est peut-être indisponible.",
+    ["The server is taking too long to download this chapter. It may still be working: try again in a moment."] =
+        "Le serveur met trop de temps à télécharger ce chapitre. Il y travaille peut-être encore : réessayez dans un instant.",
+    ["The server dropped this chapter from its download queue. Check the downloads in Suwayomi."] =
+        "Le serveur a retiré ce chapitre de sa file de téléchargement. Vérifiez les téléchargements dans Suwayomi.",
+    ["Lost contact with the server while waiting."] = "Contact perdu avec le serveur pendant l'attente.",
+    ["Could not ask the server to download this chapter:"] = "Impossible de demander au serveur de télécharger ce chapitre :",
 
     ["Server unreachable: "] = "Serveur injoignable : ",
     ["Unreadable server response"] = "Réponse illisible du serveur",

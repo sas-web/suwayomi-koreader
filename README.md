@@ -24,6 +24,11 @@ chapters, prefetching of the next ones, and reading progress kept in sync with t
 - **Prefetching**: the next chapters (3 by default) are downloaded in the background while you read, and old ones are
   deleted, so storage stays small. If the e-reader switched its Wi-Fi off, the plugin wakes it up by itself
   to keep the window of chapters filled.
+- **Missing chapters are requested from the server**: if Suwayomi has not downloaded a chapter yet, the plugin asks
+  it to (the chapter jumps to the front of the server's queue, and the server's download manager is started if it
+  was stopped), shows how far it is, and opens the chapter when it is ready. Tap the message to cancel: the server
+  carries on by itself. While you read, the same is done quietly for the next chapters, so that the window kept
+  ahead fills up even with chapters the server did not have.
 - **Progress sync**: the page reached and the "read" state are sent to Suwayomi. Offline, progress is kept on the
   device and sent as soon as the Wi-Fi is on (while prefetching, or when the library opens).
 - **Long press a chapter** to mark it read, unread, or set it as your last read chapter (everything before it
@@ -41,9 +46,10 @@ chapters, prefetching of the next ones, and reading progress kept in sync with t
   on other devices yet. It should work elsewhere, since the code only uses KOReader's own APIs (plus the optional
   PocketBook-specific loopback trick of the VPN add-on): bug reports are welcome.
 - A Suwayomi server reachable from the e-reader, using its GraphQL API (developed against v2.4.2366).
-- **The chapters must be downloaded on the Suwayomi server.** The plugin asks Suwayomi for the CBZ file of a
-  chapter, and Suwayomi refuses chapters it has not downloaded (the plugin then says so). Turn on automatic
-  download of new chapters in Suwayomi, or download chapters from its web interface.
+- **The chapters are read from the Suwayomi server's downloads.** The plugin asks Suwayomi for the CBZ file of a
+  chapter, and Suwayomi refuses chapters it has not downloaded. For those, the plugin asks the server to download
+  them (see above), which only works if the server can reach the source. Turning on automatic download of new
+  chapters in Suwayomi saves the wait.
 
 Tip: some pages (WebP, GIF) may not display well in KOReader. Suwayomi can convert them to JPEG when it downloads
 them (look for "Image download processing" in its settings).
@@ -69,8 +75,8 @@ Chapters are stored in `/mnt/ext1/Manga/_Suwayomi` on PocketBook devices, and in
 ## Settings
 
 The gear menu of the library has: mosaic / list view, panel zoom on long press (off by default, so that a long
-press does not start KOReader's panel zoom or text selection), open the library at startup, delete the downloaded
-chapters, and the server address.
+press does not start KOReader's panel zoom or text selection), open the library at startup, ask the server to
+download missing chapters (on or off), delete the downloaded chapters, and the server address.
 
 A few more settings are plain values in `settings/suwayomi.lua` (inside KOReader's folder, edit it while KOReader
 is closed):
@@ -81,6 +87,7 @@ is closed):
 | `view` | `"mosaic"` | `"mosaic"` or `"list"` |
 | `autostart` | `true` | Open the library when KOReader starts |
 | `chain` | `true` | `false` turns chapter chaining off |
+| `server_download` | `true` | `false` stops the plugin from asking the server to download missing chapters (same as the gear menu line) |
 | `prefetch_ahead` | `3` | Number of following chapters kept on the device (1 to 10) |
 | `download_dir` | see above | Folder where chapters are stored ("Delete downloaded chapters" only acts on folders named `_Suwayomi` or `suwayomi_downloads`) |
 | `panel_zoom` | `false` | KOReader's panel zoom on long press |

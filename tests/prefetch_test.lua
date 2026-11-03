@@ -20,6 +20,8 @@ local function world(opts)
         ensure_calls = 0, route_ok = opts.route_ok ~= false, fail = opts.fail or {}, wake_result = opts.wake_result,
         wake_interactive = nil, pending_cb = nil, pid = 0,
         pending = opts.pending == true, flush_ok = opts.flush_ok ~= false, flush_calls = 0,
+        server = opts.server, server_error = opts.server_error, server_calls = 0, requests = {},
+        request_ok = opts.request_ok ~= false, now = 0,
     }
     for _, id in ipairs(opts.present or {}) do w.files[pathOf(id)] = true end
     queue = {}
@@ -53,6 +55,21 @@ local function world(opts)
             w.flush_calls = w.flush_calls + 1
             if w.flush_ok then w.pending = false end
         end,
+        -- Server side (only when the scenario describes what the server has): { [chapter_id] = boolean }
+        serverHas = opts.server and function(ids)
+            w.server_calls = w.server_calls + 1
+            if w.server_error then return nil end
+            local answer = {}
+            for _, id in ipairs(ids) do
+                if w.server[id] ~= nil then answer[id] = w.server[id] end
+            end
+            return answer
+        end or nil,
+        requestServer = opts.server and function(ids)
+            table.insert(w.requests, table.concat(ids, ","))
+            return w.request_ok
+        end or nil,
+        now = function() return w.now end,
         download = function(id, path)
             table.insert(w.downloads, id)
             if w.fail[id] then return nil, "HTTP 500" end
@@ -156,6 +173,53 @@ check("P13 server unreachable: nothing sent, progress still pending", w.flush_ca
 -- P14: nothing pending, full window, offline: the Wi-Fi stays off (non-regression of P7)
 world({ online = false, present = { 4, 5, 6 }, pending = false }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
 check("P14 nothing to send or download: Wi-Fi left off", w.wake_calls == 0 and w.flush_calls == 0)
+
+-- P15: the server has chapters 5 and 6 but not 4: it is asked for 4 (once), 5 and 6 are fetched meanwhile
+world({ server = { [4] = false, [5] = true, [6] = true } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3); drain()
+check("P15 server lacks chapter 4: asked once for it", list(w.requests) == "4", list(w.requests))
+check("P15 the chapters the server has (5, 6) are fetched meanwhile", list(w.downloads) == "5,6", list(w.downloads))
+
+-- P16: the server has none of them: all three are requested, nothing is fetched, a check is scheduled in 30 s
+world({ server = { [4] = false, [5] = false, [6] = false } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+check("P16 server lacks everything: one request for 4, 5, 6", list(w.requests) == "4,5,6", list(w.requests))
+check("P16 nothing is fetched yet", #w.downloads == 0)
+check("P16 a check of the server is scheduled in 30 s", queue[1] and queue[1].delay == 30, queue[1] and tostring(queue[1].delay) or "none")
+w.server[4] = true; drain()
+check("P16 once the server has chapter 4, it is fetched by the scheduled check", list(w.downloads) == "4", list(w.downloads))
+
+-- P17: the server does not answer: the usual attempt is made (as without server-side support)
+world({ server = {}, server_error = true }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3); drain()
+check("P17 server silent: chapters are simply attempted", list(w.downloads) == "4,5,6" and #w.requests == 0, list(w.downloads))
+
+-- P18: the same chapters are not requested again before the delay, but are after it
+-- (the server has none of them, so no download is running and every start() reaches the server)
+world({ server = { [4] = false, [5] = false, [6] = false } }); pf:beginReading(ctx, 3, 3); w.now = 0; pf:start(ctx, 3)
+w.now = 100; pf:start(ctx, 3)
+check("P18 no new request after 100 s", #w.requests == 1, tostring(#w.requests))
+w.now = 700; pf:start(ctx, 3)
+check("P18 asked again after 700 s", #w.requests == 2, tostring(#w.requests))
+
+-- P19: a scheduled check never wakes the Wi-Fi up
+world({ server = { [4] = false, [5] = false, [6] = false } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+w.online = false; drain()
+check("P19 Wi-Fi turned off while waiting: no wake-up, no request", w.wake_calls == 0 and #w.requests == 1, w.wake_calls .. " | " .. #w.requests)
+
+-- P20: the checks stop after a while (about ten minutes of waiting)
+world({ server = { [4] = false, [5] = false, [6] = false } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3); drain()
+check("P20 at most 20 scheduled checks (21 questions to the server in all)", w.server_calls == 21, tostring(w.server_calls))
+
+-- P21: reading ends while a check is scheduled: nothing more happens
+world({ server = { [4] = false, [5] = false, [6] = false } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+pf:endReading(3); w.server[4] = true; drain()
+check("P21 reading ended: the scheduled check does nothing", #w.downloads == 0 and w.server_calls == 1, #w.downloads .. " | " .. w.server_calls)
+
+-- P22: the request itself fails (network): the chapters are not marked as requested, so they are asked again next time
+world({ server = { [4] = false, [5] = false, [6] = false }, request_ok = false }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+check("P22 the first request failed", #w.requests == 1)
+w.request_ok = true; pf:start(ctx, 3)
+check("P22 failed request: asked again at the next opportunity", #w.requests == 2, tostring(#w.requests))
+pf:start(ctx, 3)
+check("P22 and, once it went through, not asked a third time", #w.requests == 2, tostring(#w.requests))
 
 print(failures == 0 and "\nALL PREFETCH SCENARIOS PASS" or ("\n" .. failures .. " FAILURE(S)"))
 os.exit(failures == 0 and 0 or 1)

@@ -35,10 +35,11 @@ function Api:ping(url, timeout)
 end
 
 --- Runs a GraphQL request. Returns the `data` table, or nil and an error message.
-function Api:graphql(query, variables)
+--- `timeout` (seconds, default 10) is the wait for each answer; the whole exchange may last three times as long.
+function Api:graphql(query, variables, timeout)
     local body = json.encode({ query = query, variables = variables or {} })
     local sink = {}
-    socketutil:set_timeout(10, 30)
+    socketutil:set_timeout(timeout or 10, (timeout or 10) * 3)
     local code, _headers, status = socket.skip(1, http.request({
         url = self.server_url .. "/api/graphql",
         method = "POST",
@@ -201,14 +202,82 @@ function Api:downloadFile(url, path, block_timeout, total_timeout)
     return path
 end
 
---- Downloads a chapter as a CBZ to `path`.
+--- Downloads a chapter as a CBZ to `path`. When the server does not have the chapter, returns
+--- nil, a message and the code "not_downloaded" (the caller may then ask the server to download it).
 function Api:downloadChapter(chapter_id, path)
     local file, err = self:downloadFile(string.format("%s/api/v1/chapter/%d/download", self.server_url, chapter_id), path)
     if not file and err and err:find("400", 1, true) then
         -- Suwayomi answers 400 when the chapter is not (or no longer) downloaded on the server.
-        return nil, _("This chapter is not downloaded on the Suwayomi server (the download failed or is still queued on the server).")
+        return nil, _("This chapter is not downloaded on the Suwayomi server (the download failed or is still queued on the server)."),
+            "not_downloaded"
     end
     return file, err
+end
+
+--- Which of these chapters does the server have? Returns { [chapter_id] = true | false } (a chapter the server
+--- no longer knows is absent from the table), or nil and an error message.
+function Api:chaptersDownloaded(ids, timeout)
+    local data, err = self:graphql([[
+        query($ids: [Int!]!) { chapters(filter: {id: {in: $ids}}) { nodes { id isDownloaded } } }
+    ]], { ids = ids }, timeout)
+    if not data then return nil, err end
+    local downloaded = {}
+    for _index, c in ipairs(data.chapters.nodes) do downloaded[c.id] = c.isDownloaded == true end
+    return downloaded
+end
+
+--- Starts the server's download manager (it is stopped after a restart of the server). Returns true, or nil, error.
+function Api:startDownloader()
+    local data, err = self:graphql([[
+        mutation { startDownloader(input: {}) { downloadStatus { state } } }
+    ]])
+    if not data then return nil, err end
+    return true
+end
+
+--- Asks the server to download chapters: puts them in its download queue and makes sure its download manager
+--- runs (it is stopped after a restart of the server). With `urgent`, the first chapter jumps to the front of
+--- the queue. Returns true, or nil and an error message.
+function Api:requestDownloads(ids, urgent)
+    if #ids == 0 then return true end
+    local data, err = self:graphql([[
+        mutation($ids: [Int!]!) { enqueueChapterDownloads(input: {ids: $ids}) { downloadStatus { state } } }
+    ]], { ids = ids })
+    if not data then return nil, err end
+    local started, start_err = self:startDownloader()
+    if not started then return nil, start_err end
+    if urgent then
+        -- Best effort: the chapter downloads anyway, only later if the reorder fails.
+        local _moved, move_err = self:graphql([[
+            mutation($id: Int!) { reorderChapterDownload(input: {chapterId: $id, to: 0}) { downloadStatus { state } } }
+        ]], { id = ids[1] })
+        if move_err then logger.info("Suwayomi: could not move the chapter to the front of the queue:", move_err) end
+    end
+    return true
+end
+
+--- State of the server's download of one chapter, in a single request. Returns
+--- { downloaded = boolean, entry = { state, progress, tries } | nil, manager = "STARTED" | "STOPPED" },
+--- where `entry` is the chapter's line in the server's queue (state QUEUED, DOWNLOADING, FINISHED or ERROR,
+--- progress from 0 to 1), or nil and an error message.
+function Api:serverDownloadState(chapter_id, timeout)
+    local data, err = self:graphql([[
+        query($ids: [Int!]!) {
+            chapters(filter: {id: {in: $ids}}) { nodes { id isDownloaded } }
+            downloadStatus { state queue { progress state tries chapter { id } } }
+        }
+    ]], { ids = { chapter_id } }, timeout)
+    if not data then return nil, err end
+    local result = { downloaded = false, manager = data.downloadStatus.state }
+    for _index, c in ipairs(data.chapters.nodes) do
+        if c.id == chapter_id then result.downloaded = c.isDownloaded == true end
+    end
+    for _index, item in ipairs(data.downloadStatus.queue) do
+        if item.chapter.id == chapter_id then
+            result.entry = { state = item.state, progress = item.progress, tries = item.tries }
+        end
+    end
+    return result
 end
 
 --- Downloads a series' cover to `path` (original format: JPEG, PNG, WebP or GIF).
