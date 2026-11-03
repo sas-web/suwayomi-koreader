@@ -105,6 +105,10 @@ brings its own small mechanism (`suwayomi_i18n.lua`).
 The prefetching, the VPN route choice and the translations have tests that run with KOReader's LuaJIT, without a
 device or a server. See [tests/README.md](tests/README.md).
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## Disclaimer
 
 An independent project, not affiliated with or endorsed by Suwayomi, Mihon / Tachiyomi, KOReader or PocketBook.
