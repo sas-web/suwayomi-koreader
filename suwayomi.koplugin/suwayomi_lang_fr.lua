@@ -68,6 +68,7 @@ return {
     ["Suwayomi: resume reading"] = "Suwayomi : reprendre la lecture",
     ["Ask the server to download missing chapters: yes"] = "Demander au serveur de télécharger les chapitres manquants : oui",
     ["Ask the server to download missing chapters: no"] = "Demander au serveur de télécharger les chapitres manquants : non",
+    ["Connecting to Wi-Fi to fetch the next chapters…"] = "Connexion au Wi-Fi pour récupérer les prochains chapitres…",
     ["Asking the server to download this chapter…"] = "Demande au serveur de télécharger ce chapitre…",
     ["The server is downloading this chapter: %d%%\nTap to cancel."] =
         "Le serveur télécharge ce chapitre : %d%%\nToucher pour annuler.",
@@ -122,6 +123,9 @@ return {
     ["127.0.0.1: bind %s, connection %s"] = "127.0.0.1 : bind %s, connexion %s",
     ["%s (this device): connection %s"] = "%s (cette liseuse) : connexion %s",
     ["Local addresses: %s"] = "Adresses locales : %s",
+    ["Router: %s"] = "Routeur : %s",
+    ["Home router remembered: %s"] = "Routeur de la maison mémorisé : %s",
+    ["unknown"] = "inconnu",
     ["none"] = "aucune",
     ["wireproxy: running"] = "wireproxy : en marche",
     ["wireproxy: stopped"] = "wireproxy : arrêté",
@@ -130,6 +134,7 @@ return {
     ["this server"] = "ce serveur",
     ["The loopback (127.0.0.1) is down and could not be brought up."] =
         "La boucle locale (127.0.0.1) est éteinte et n'a pas pu être allumée.",
+    ["The server does not answer."] = "Le serveur ne répond pas.",
     ["The wireproxy program does not start."] = "Le programme wireproxy ne démarre pas.",
     ["wireproxy stopped right after starting."] = "wireproxy s'est arrêté juste après son démarrage.",
     ["The VPN tunnel does not answer: check the WireGuard profile, or the server is unreachable from this network."] =

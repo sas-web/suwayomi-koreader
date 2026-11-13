@@ -21,7 +21,7 @@ local function world(opts)
         wake_interactive = nil, pending_cb = nil, pid = 0,
         pending = opts.pending == true, flush_ok = opts.flush_ok ~= false, flush_calls = 0,
         server = opts.server, server_error = opts.server_error, server_calls = 0, requests = {},
-        request_ok = opts.request_ok ~= false, now = 0,
+        request_ok = opts.request_ok ~= false, now = 0, busy_shown = 0, busy_hidden = 0, ensure_quiet = nil,
     }
     for _, id in ipairs(opts.present or {}) do w.files[pathOf(id)] = true end
     queue = {}
@@ -46,7 +46,13 @@ local function world(opts)
         chapterPath = function(_, chapter) return pathOf(chapter.id) end,
         mkdirs = function() end,
         aheadCount = function() return 3 end,
-        ensureServer = function()
+        lowCount = function() return opts.low or 1 end, -- the Wi-Fi is woken up when 1 chapter or fewer is ready ahead
+        showBusy = function()
+            w.busy_shown = w.busy_shown + 1
+            return function() w.busy_hidden = w.busy_hidden + 1 end
+        end,
+        ensureServer = function(quiet)
+            w.ensure_quiet = quiet
             w.ensure_calls = w.ensure_calls + 1
             return w.route_ok, (not w.route_ok) and "SERVER DOWN\nline 2" or nil
         end,
@@ -145,13 +151,17 @@ w.online = true; pf:start(ctx, 3)
 check("P10 as soon as the Wi-Fi is on (for another reason): progress sent, nothing downloaded",
     w.flush_calls == 1 and w.pending == false and #w.downloads == 0, w.flush_calls .. " | " .. list(w.downloads))
 
--- P10b: pending progress and a chapter to download, Wi-Fi off: the wake-up serves both
-world({ online = false, present = { 4, 5 }, pending = true }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
-check("P10b a chapter is missing: the Wi-Fi is woken up (once)", w.wake_calls == 1 and w.flush_calls == 0)
+-- P10b: pending progress and the buffer is low (1 chapter ready of 3), Wi-Fi off: the wake-up serves both
+world({ online = false, present = { 4 }, pending = true }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+check("P10b buffer low: the Wi-Fi is woken up (once)", w.wake_calls == 1 and w.flush_calls == 0)
 w.online = true; w.pending_cb(); drain()
-check("P10b once online: route rechecked, progress sent, then chapter 6 downloaded",
-    w.ensure_calls == 1 and w.flush_calls == 1 and w.pending == false and list(w.downloads) == "6",
+check("P10b once online: route rechecked, progress sent, then chapters 5 and 6 downloaded",
+    w.ensure_calls == 1 and w.flush_calls == 1 and w.pending == false and list(w.downloads) == "5,6",
     w.ensure_calls .. " | " .. w.flush_calls .. " | " .. list(w.downloads))
+
+-- P10c: pending progress but enough chapters ahead (2 of 3 ready), Wi-Fi off: no wake-up just to send it
+world({ online = false, present = { 4, 5 }, pending = true }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+check("P10c buffer fine: the Wi-Fi is left alone, progress waits", w.wake_calls == 0 and w.pending == true, tostring(w.wake_calls))
 
 -- P11: online with pending progress and chapters to download: send first, then 4, 5, 6
 world({ pending = true }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3); drain()
@@ -166,7 +176,7 @@ pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
 check("P12 at the next chapter a new attempt is allowed", w.flush_calls == 2, tostring(w.flush_calls))
 
 -- P13: server unreachable after the wake-up: nothing is sent or downloaded
-world({ online = false, present = { 4, 5 }, pending = true, route_ok = false }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+world({ online = false, pending = true, route_ok = false }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
 w.online = true; w.pending_cb(); drain()
 check("P13 server unreachable: nothing sent, progress still pending", w.flush_calls == 0 and w.pending == true)
 
@@ -179,11 +189,11 @@ world({ server = { [4] = false, [5] = true, [6] = true } }); pf:beginReading(ctx
 check("P15 server lacks chapter 4: asked once for it", list(w.requests) == "4", list(w.requests))
 check("P15 the chapters the server has (5, 6) are fetched meanwhile", list(w.downloads) == "5,6", list(w.downloads))
 
--- P16: the server has none of them: all three are requested, nothing is fetched, a check is scheduled in 30 s
+-- P16: the server has none of them: all three are requested, nothing is fetched, a check is scheduled in 10 s
 world({ server = { [4] = false, [5] = false, [6] = false } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
 check("P16 server lacks everything: one request for 4, 5, 6", list(w.requests) == "4,5,6", list(w.requests))
 check("P16 nothing is fetched yet", #w.downloads == 0)
-check("P16 a check of the server is scheduled in 30 s", queue[1] and queue[1].delay == 30, queue[1] and tostring(queue[1].delay) or "none")
+check("P16 a check of the server is scheduled in 10 s", queue[1] and queue[1].delay == 10, queue[1] and tostring(queue[1].delay) or "none")
 w.server[4] = true; drain()
 check("P16 once the server has chapter 4, it is fetched by the scheduled check", list(w.downloads) == "4", list(w.downloads))
 
@@ -220,6 +230,50 @@ w.request_ok = true; pf:start(ctx, 3)
 check("P22 failed request: asked again at the next opportunity", #w.requests == 2, tostring(#w.requests))
 pf:start(ctx, 3)
 check("P22 and, once it went through, not asked a third time", #w.requests == 2, tostring(#w.requests))
+
+-- P23: enough chapters ahead: the Wi-Fi is left alone; running low wakes it up; already on: the window is filled
+world({ online = false, present = { 4, 5 } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+check("P23 two of three chapters ready: no wake-up", w.wake_calls == 0 and #w.downloads == 0, tostring(w.wake_calls))
+world({ online = false, present = { 4 } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+check("P23 only one of three ready (low): the Wi-Fi is woken up", w.wake_calls == 1, tostring(w.wake_calls))
+world({ online = true, present = { 4, 5 } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3); drain()
+check("P23 Wi-Fi already on: the window is filled whatever the buffer", list(w.downloads) == "6", list(w.downloads))
+
+-- P24: waking the Wi-Fi up explains the frozen screen with a message
+world({ online = false }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+check("P24 waking the Wi-Fi up shows the message once and hides it when the call returns",
+    w.busy_shown == 1 and w.busy_hidden == 1, w.busy_shown .. " | " .. w.busy_hidden)
+world({ online = true }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3); drain()
+check("P24 no message when the Wi-Fi is already on", w.busy_shown == 0)
+world({ online = false, wake_result = false }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+check("P24 refused wake-up: the message is hidden as well", w.busy_shown == 1 and w.busy_hidden == 1)
+
+-- P25: the route to the server is checked quietly (the VPN add-on never starts a tunnel in the background)
+world({ online = false }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3); w.online = true; w.pending_cb(); drain()
+check("P25 route checked in quiet mode", w.ensure_quiet == true and w.ensure_calls == 1, tostring(w.ensure_quiet))
+
+-- P26: route unreachable after the wake-up: checked again soon, then the chapters are fetched
+world({ online = false, route_ok = false }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3); w.online = true; w.pending_cb()
+local rechecking = false
+for _, item in ipairs(queue) do if item.delay == 10 then rechecking = true end end
+check("P26 route unreachable: a new check is scheduled in 10 s", rechecking and #w.downloads == 0)
+w.route_ok = true; drain()
+check("P26 once the server answers, the chapters are fetched", list(w.downloads) == "4,5,6", list(w.downloads))
+
+-- P27: the checks of the server come after 10 s, then 20 s, then every 30 s
+world({ server = { [4] = false, [5] = false, [6] = false } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3)
+local delays = {}
+for _ = 1, 5 do
+    local item = table.remove(queue, 1)
+    if not item then break end
+    delays[#delays + 1] = item.delay
+    item.fn()
+end
+check("P27 checks after 10 s, 20 s, then 30 s", list(delays) == "10,20,30,30,30", list(delays))
+
+-- P28: a failed download is retried without waking the Wi-Fi up
+world({ fail = { [4] = true } }); pf:beginReading(ctx, 3, 3); pf:start(ctx, 3); w.online = false; drain()
+check("P28 retry after a failure never wakes the Wi-Fi up", w.wake_calls == 0, tostring(w.wake_calls))
 
 print(failures == 0 and "\nALL PREFETCH SCENARIOS PASS" or ("\n" .. failures .. " FAILURE(S)"))
 os.exit(failures == 0 and 0 or 1)

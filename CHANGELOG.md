@@ -2,6 +2,35 @@
 
 All notable changes to this project. Dates are release dates.
 
+## v0.1.2 (unreleased)
+
+Fixes the screen freezing for 10 to 40 seconds, often at the start of a new chapter, with nothing on screen. The
+cause, found in a log from a real reading session: on PocketBook, waking the Wi-Fi up blocks the whole e-reader until
+the connection is made (4 to 17 s measured), the e-reader turns its Wi-Fi off again within two minutes, so this
+happened for almost every chapter; and a failed home test right after a wake-up could start the VPN tunnel, which
+froze the screen for another 25 s.
+
+### Changed
+- **The Wi-Fi is woken up far less often.** Only when the chapters ready ahead run low (a third of the window or
+  fewer), then the whole window is filled in one go. The default window grows from 3 to 6 chapters
+  (`prefetch_ahead`). If the Wi-Fi is already on, the window is filled whatever its state.
+- **A message explains the wait** ("Connecting to Wi-Fi to fetch the next chapters…") before the call that blocks.
+- **Background checks never start the VPN tunnel**, and never wake the Wi-Fi up: a failed download is retried
+  quietly, and a route that does not answer is checked again 10 s later. The checks of the server's downloads come
+  after 10 s, then 20 s, then every 30 s.
+- **The e-reader's connection is read with a cheap test** (`isConnected`) instead of `isOnline`, which also resolves
+  a host name and blocks the screen when the DNS is slow.
+- **Saving the reading progress at the end of a chapter** gives up after 3 s instead of 10 s when the Wi-Fi is half
+  asleep (the progress is kept and sent later).
+- Pending progress no longer wakes the Wi-Fi up by itself: it is sent when the Wi-Fi is on anyway, or when the
+  library opens.
+
+### Added (VPN add-on)
+- **The home network is recognised by its router** (address and hardware address read from the kernel, learned the
+  first time the server is reached directly). On it the tunnel is never used, on any other network the home test is
+  skipped. The diagnostic shows the router and the remembered home router.
+- Tests for all of it (`prefetch_test.lua`, `vpn_route_test.lua`).
+
 ## v0.1.1 (2026-11-03)
 
 Opening a chapter that the Suwayomi server had not downloaded used to fail with an error (the server answers

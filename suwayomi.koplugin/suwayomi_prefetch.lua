@@ -6,25 +6,33 @@
 -- on the device opens without any network, so the prefetcher has to wake the Wi-Fi up itself, otherwise the
 -- window of chapters kept ahead would never fill up again.
 --
+-- Waking the Wi-Fi up is expensive: on some e-readers (PocketBook) it freezes the whole screen for 5 to 20 seconds.
+-- So it is done as rarely as possible: only when the chapters ready ahead run low (see `lowCount`), and then the
+-- whole window is filled in one go while the Wi-Fi is on. Nothing in the background ever starts a VPN tunnel
+-- either (`ensureServer(true)`).
+--
 -- When the Suwayomi server does not have a chapter of the window yet, the prefetcher asks it to download the
 -- missing ones (see `serverHas` / `requestServer`), fetches the chapters that are ready in the meantime and
--- checks back every half minute, without ever waking the Wi-Fi up just for that.
+-- checks back shortly after (10 s, then 20 s, then every 30 s), without ever waking the Wi-Fi up just for that.
 
 local MAX_FAILURES = 2    -- a chapter that fails twice is not tried again during this reading session
 local RETRY_DELAY = 15    -- seconds before retrying after a failure
 local POLL_DELAY = 3      -- seconds between two checks of a running download
 local WAKE_TIMEOUT = 90   -- seconds before giving up on a Wi-Fi wake-up that never completes
-local SERVER_RECHECK = 30 -- seconds before checking again whether the server has finished its downloads
+local RECHECK_DELAYS = { 10, 20, 30 } -- seconds before checking again whether the server has finished (then 30 s)
 local MAX_RECHECKS = 20   -- checks per reading session (about ten minutes), then we wait for the next chapter
 local REQUEST_TTL = 600   -- seconds before the server is asked again for the same chapter
 
 local Prefetch = {}
 Prefetch.__index = Prefetch
 
---- `deps`: NetworkMgr, UIManager, ffiutil, lfs, logger, chapterPath(series_title, chapter), mkdirs(dir),
---- aheadCount(), ensureServer(), download(chapter_id, path) -> file or nil, error,
---- hasPendingProgress() -> boolean, flushPendingProgress() (sends the progress that could not be sent earlier).
---- Optional: serverHas(ids) -> { [chapter_id] = boolean } or nil if the server did not answer,
+--- `deps`: NetworkMgr (isOnline(), enableWifi(callback, interactive)), UIManager, ffiutil, lfs, logger,
+--- chapterPath(series_title, chapter), mkdirs(dir), aheadCount(), ensureServer(quiet), download(chapter_id, path)
+--- -> file or nil, error, hasPendingProgress() -> boolean, flushPendingProgress() (sends the progress that could
+--- not be sent earlier).
+--- Optional: lowCount() -> number of chapters ready ahead at or below which the Wi-Fi may be woken up (without it,
+--- any missing chapter wakes it), showBusy() -> function that hides the "connecting" message it displays,
+--- serverHas(ids) -> { [chapter_id] = boolean } or nil if the server did not answer,
 --- requestServer(ids) -> boolean (asks the server to download these chapters), now() -> seconds.
 function Prefetch.new(deps)
     return setmetatable({
@@ -67,18 +75,24 @@ function Prefetch:endReading(chapter_id)
     if self.reading and self.reading.chapter_id == chapter_id then self.reading = nil end
 end
 
---- Wakes the Wi-Fi up without showing anything (the e-reader turns it off by itself while reading), then calls `fn`.
+--- Wakes the Wi-Fi up, then calls `fn`. On some e-readers (PocketBook) the call blocks until the connection is made
+--- and shows nothing by itself: a message is displayed first so that the frozen screen is explained.
 function Prefetch:wake(fn)
     if self.wake_pending then return end
     local d = self.d
+    local clock = d.now or os.time
     self.wake_pending = true
     d.logger.info("Suwayomi: Wi-Fi is off, waking it up for prefetching")
+    local hide = d.showBusy and d.showBusy()
+    local began = clock()
     local started = d.NetworkMgr:enableWifi(function()
         self.wake_pending = false
         self.route_stale = true -- the network may have changed while it was off
         self.flush_due = true   -- and now is the time to send what could not be sent
         if d.NetworkMgr:isOnline() then fn() end
     end, false)
+    if hide then hide() end
+    d.logger.info("Suwayomi: Wi-Fi wake-up call returned after", clock() - began, "s")
     if started == false then self.wake_pending = false end
     -- Safety net: if the connection never completes, release the flag so that a later attempt is possible.
     d.UIManager:scheduleIn(WAKE_TIMEOUT, function() self.wake_pending = false end)
@@ -106,26 +120,28 @@ function Prefetch:poll()
     if not reading then return end
     if failed then
         d.UIManager:scheduleIn(RETRY_DELAY, function()
-            if self.reading == reading then self:start(reading.ctx, reading.index) end
+            if self.reading == reading then self:start(reading.ctx, reading.index, true) end
         end)
     else
         self:start(reading.ctx, reading.index)
     end
 end
 
---- The upcoming chapters (the window ahead) that are not on the device yet and not given up on:
---- a list of { chapter, path }, nearest first.
+--- The upcoming chapters (the window ahead): a list of { chapter, path } for those that are not on the device
+--- yet and not given up on, nearest first, and the number of chapters of the window that are already on the device.
 function Prefetch:missingChapters(ctx, index)
     local d = self.d
-    local missing = {}
+    local missing, ready = {}, 0
     for i = index + 1, math.min(#ctx.chapters, index + d.aheadCount()) do
         local upcoming = ctx.chapters[i]
         local path = d.chapterPath(ctx.series.title, upcoming)
-        if d.lfs.attributes(path, "mode") ~= "file" and (self.failures[upcoming.id] or 0) < MAX_FAILURES then
+        if d.lfs.attributes(path, "mode") == "file" then
+            ready = ready + 1
+        elseif (self.failures[upcoming.id] or 0) < MAX_FAILURES then
             missing[#missing + 1] = { chapter = upcoming, path = path }
         end
     end
-    return missing
+    return missing, ready
 end
 
 --- Chooses the nearest missing chapter that the server has, and asks the server to download the ones it lacks.
@@ -159,33 +175,42 @@ function Prefetch:pickServerReady(missing)
     return nil
 end
 
---- Checks again in a while whether the server has finished its downloads (only while still reading).
+--- Checks again soon whether the server has finished (only while still reading): after 10 s, then 20 s, then 30 s.
 function Prefetch:scheduleRecheck()
     local reading = self.reading
     if self.recheck_pending or not reading or self.rechecks >= MAX_RECHECKS then return end
     self.recheck_pending = true
     self.rechecks = self.rechecks + 1
-    self.d.UIManager:scheduleIn(SERVER_RECHECK, function()
+    local delay = RECHECK_DELAYS[math.min(self.rechecks, #RECHECK_DELAYS)]
+    self.d.UIManager:scheduleIn(delay, function()
         self.recheck_pending = false
         if self.reading == reading then self:start(reading.ctx, reading.index, true) end
     end)
 end
 
+--- Is the buffer of chapters ready ahead low enough to be worth waking the Wi-Fi up?
+function Prefetch:isBufferLow(ready)
+    local low = self.d.lowCount and self.d.lowCount()
+    return low == nil or ready <= low
+end
+
 --- Sends the pending progress and starts downloading the next missing chapter.
 --- The e-reader turns its Wi-Fi off while reading: a chapter finished offline stays "pending" on the device.
---- It is sent when the Wi-Fi is on anyway (already online, or woken up to download a chapter): the Wi-Fi is
---- never woken up just for this, opening the library takes care of it otherwise.
---- `quiet` (a scheduled check of the server's downloads) never wakes the Wi-Fi up either.
+--- It is sent when the Wi-Fi is on anyway: the Wi-Fi is never woken up just for this, the next wake-up or the
+--- opening of the library takes care of it.
+--- The Wi-Fi is woken up only when the buffer of chapters ready ahead is low; if it is already on, the window is
+--- filled whatever its state. `quiet` (a scheduled check) never wakes the Wi-Fi up.
 function Prefetch:start(ctx, index, quiet)
     if self.active then return end
     local d = self.d
-    local missing = self:missingChapters(ctx, index)
+    local missing, ready = self:missingChapters(ctx, index)
     local online = d.NetworkMgr:isOnline()
-    local to_flush = self.flush_due and d.hasPendingProgress() and (online or #missing > 0)
+    local to_flush = self.flush_due and online and d.hasPendingProgress()
     if #missing == 0 and not to_flush then return end
     if quiet and not online then return end
 
     if not online then
+        if not self:isBufferLow(ready) then return end -- enough chapters ahead: leave the Wi-Fi alone
         local current = self.reading and self.reading.chapter_id
         self:wake(function()
             if self.reading and self.reading.chapter_id == current then self:start(ctx, index) end
@@ -193,12 +218,14 @@ function Prefetch:start(ctx, index, quiet)
         return
     end
     if self.route_stale then
-        self.route_stale = false
-        local reachable, err = d.ensureServer()
+        -- Background check of the route: the home address or an open tunnel only, never a new tunnel.
+        local reachable, err = d.ensureServer(true)
         if not reachable then
             d.logger.warn("Suwayomi: prefetch impossible, server unreachable:", tostring(err):match("^[^\n]*"))
+            self:scheduleRecheck() -- the route stays to be checked: try again soon
             return
         end
+        self.route_stale = false
     end
     if to_flush then
         self.flush_due = false -- one attempt per opportunity: a silent server must not freeze the reading

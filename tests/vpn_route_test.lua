@@ -7,6 +7,9 @@ package.path = "?.lua;common/?.lua;frontend/?.lua;plugins/suwayomi.koplugin/?.lu
 package.cpath = "common/?.so;libs/?.so;" .. package.cpath
 require("setupkoenv")
 local Vpn = require("suwayomi_vpn")
+local socket = require("socket")
+socket.sleep = function() end -- the pauses between tries are not worth waiting for in a test
+local real = { identity = Vpn.networkIdentity, home = Vpn.homeNetwork, remember = Vpn.rememberHomeNetwork }
 
 local HOME, TUNNEL = "http://192.168.1.10:4567", "http://127.0.0.1:4567"
 local OTHER = "http://192.168.1.10:8765" -- another service on the same home machine
@@ -19,10 +22,16 @@ local function world(address)
     function api:setServer(u) self.server = u end
     function api:ping(u, t)
         table.insert(w.calls, "ping " .. ((u == HOME or u == OTHER) and "home" or "tunnel") .. " " .. t)
-        return w.reachable[u] == true
+        local reachable = w.reachable[u]
+        if type(reachable) == "function" then reachable = reachable(#w.calls) end -- answers depending on the try
+        return reachable == true
     end
     Vpn.active, Vpn.url, Vpn.network = false, nil, nil
     Vpn.localAddress = function() return w.address end
+    -- The router's identity and the remembered home network (unknown unless a scenario sets them)
+    Vpn.networkIdentity = function() return w.identity end
+    Vpn.homeNetwork = function() return w.home end
+    Vpn.rememberHomeNetwork = function(_, id) if id and id ~= w.home then w.home = id; w.remembered = id end end
     Vpn.isRunning = function() return w.running end
     Vpn.stop = function(self) w.stops = w.stops + 1; w.running = false; self.active, self.url, self.network = false, nil, nil end
     Vpn.connect = function(self, a, target)
@@ -111,6 +120,84 @@ for _, c in ipairs(rule_cases) do
     local got = Vpn.isOnHomeNetwork(c[1], c[2])
     check(string.format("S10 rule: %-55s -> %s", c[4], tostring(c[3])), got == c[3], "got " .. tostring(got))
 end
+
+-- N: the home network is recognised by its router
+local HOME_NET, OTHER_NET = "192.168.1.254@aa:bb:cc:dd:ee:01", "10.0.0.1@aa:bb:cc:dd:ee:02"
+
+world("192.168.1.159"); w.identity, w.home = HOME_NET, HOME_NET
+w.reachable[HOME] = function(n) return n >= 2 end -- the network is still settling: the first try fails
+ok = Vpn:ensureRoute(api, HOME)
+check("N1 home network, first try fails: tried again, no tunnel", ok and api.server == HOME and w.connects == 0 and calls() == "ping home 2 | ping home 2", calls())
+
+world("192.168.1.159"); w.identity, w.home = HOME_NET, HOME_NET
+local okn, errn = Vpn:ensureRoute(api, HOME)
+check("N2 home network, server silent: three tries, an error, never a tunnel", okn == false and w.connects == 0 and calls() == "ping home 2 | ping home 2 | ping home 2", calls())
+
+world("192.168.1.200"); w.identity, w.home = OTHER_NET, HOME_NET; w.reachable[TUNNEL] = true
+ok = Vpn:ensureRoute(api, HOME)
+check("N3 another network (even with a similar address): home test skipped, straight to the tunnel", ok and api.server == TUNNEL and calls() == "connect", calls())
+
+world("192.168.1.159"); w.identity = HOME_NET; w.reachable[HOME] = true
+ok = Vpn:ensureRoute(api, HOME)
+check("N4 home reached directly on an unknown network: the router is remembered", ok and w.remembered == HOME_NET and w.home == HOME_NET)
+
+world("192.168.43.7"); w.identity, w.home = OTHER_NET, HOME_NET; w.connect_ok = false; w.reachable[HOME] = true
+ok = Vpn:ensureRoute(api, HOME)
+check("N5 new router at home (tunnel fails, direct works): the new router is remembered",
+    ok and api.server == HOME and w.remembered == OTHER_NET and calls() == "connect | ping home 3", calls())
+
+world("192.168.1.159"); w.identity, w.home = HOME_NET, HOME_NET; w.reachable[HOME] = true
+ok = Vpn:ensureRoute(api, HOME, true)
+check("N6 background check at home: a single short try", ok and calls() == "ping home 2", calls())
+
+world("192.168.43.7"); w.identity, w.home = OTHER_NET, HOME_NET
+okn = Vpn:ensureRoute(api, HOME, true)
+check("N7 background check elsewhere without a tunnel: nothing tried, no tunnel started", okn == false and calls() == "" and w.connects == 0, calls())
+
+world("192.168.43.7"); w.reachable[HOME] = false
+okn = Vpn:ensureRoute(api, HOME, true)
+check("N8 background check on an unknown network: one short try, no tunnel", okn == false and calls() == "ping home 2" and w.connects == 0, calls())
+
+world("192.168.43.7"); w.reachable[TUNNEL] = true
+Vpn:ensureRoute(api, HOME)
+w.calls = {}
+ok = Vpn:ensureRoute(api, HOME, true)
+check("N9 background check with the tunnel already open: reused after a short test", ok and api.server == TUNNEL and calls() == "ping tunnel 2" and w.connects == 1, calls())
+
+-- N10: reading the router's identity from (fake) kernel tables
+local function writeFile(path, text) local f = io.open(path, "w"); f:write(text); f:close() end
+local routes, arps = os.tmpname(), os.tmpname()
+Vpn.route_table, Vpn.arp_table = routes, arps
+local function identity() return real.identity(Vpn) end
+writeFile(routes, "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n" ..
+    "eth0\t00000000\tFE01A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n" ..
+    "eth0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n")
+writeFile(arps, "IP address       HW type     Flags       HW address            Mask     Device\n" ..
+    "192.168.1.254    0x1         0x2         A4:B1:C2:D3:E4:F5     *        eth0\n")
+check("N10 the router is read from the routing and ARP tables", identity() == "192.168.1.254@a4:b1:c2:d3:e4:f5", tostring(identity()))
+writeFile(arps, "IP address       HW type     Flags       HW address            Mask     Device\n" ..
+    "192.168.1.254    0x1         0x0         00:00:00:00:00:00     *        eth0\n")
+check("N10 an unresolved ARP entry gives no identity", identity() == nil, tostring(identity()))
+writeFile(arps, "IP address       HW type     Flags       HW address            Mask     Device\n" ..
+    "192.168.1.77     0x1         0x2         A4:B1:C2:D3:E4:AA     *        eth0\n")
+check("N10 a router that is not in the ARP table gives no identity", identity() == nil, tostring(identity()))
+writeFile(routes, "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n" ..
+    "eth0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n")
+check("N10 no default route gives no identity", identity() == nil, tostring(identity()))
+os.remove(routes); os.remove(arps)
+
+-- N11: the home network is remembered in a file, written only when it changes
+local paths_home = Vpn:paths()
+os.execute("mkdir -p '" .. paths_home.dir .. "'")
+os.remove(paths_home.home)
+check("N11 nothing remembered at first", real.home(Vpn) == nil)
+real.remember(Vpn, HOME_NET)
+check("N11 the home router is remembered", real.home(Vpn) == HOME_NET, tostring(real.home(Vpn)))
+real.remember(Vpn, OTHER_NET)
+check("N11 a new home router replaces it", real.home(Vpn) == OTHER_NET, tostring(real.home(Vpn)))
+real.remember(Vpn, nil)
+check("N11 an unknown identity is never remembered", real.home(Vpn) == OTHER_NET)
+os.remove(paths_home.home)
 
 -- T: one tunnel per server in the profile (real tunnelUrl / addTunnel on a fake profile)
 local paths = Vpn:paths()

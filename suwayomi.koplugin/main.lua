@@ -39,7 +39,9 @@ if not has_vpn then
 end
 
 local KEEP_BEHIND = 2 -- chapters already read that are kept on the device (besides the current one)
-local DEFAULT_AHEAD = 3 -- following chapters downloaded in advance (setting "prefetch_ahead")
+local DEFAULT_AHEAD = 6 -- following chapters kept on the device (setting "prefetch_ahead"); a deep window means
+                        -- the Wi-Fi, which freezes some e-readers while it connects, is woken up only now and then
+local SAVE_TIMEOUT = 3 -- seconds before giving up on saving the reading progress (the screen waits for it)
 
 -- State shared between the plugin's instances (FileManager and ReaderUI each have one).
 local settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/suwayomi.lua")
@@ -72,7 +74,9 @@ end
 
 --- Chooses the route to Suwayomi: the local network if the server answers there, otherwise the VPN tunnel
 --- (if it is configured and enabled). Returns true, or false and an error message.
-local function ensureServer()
+--- `quiet` is for checks made in the background: the home address or an already open tunnel only, a new tunnel
+--- (which takes up to 25 seconds with the screen frozen) is never started.
+local function ensureServer(quiet)
     local home = homeUrl()
     if not home then return false, _("No server address is set.") end
     Api:setServer(home)
@@ -80,7 +84,7 @@ local function ensureServer()
         Vpn.active, Vpn.url, Vpn.network = false, nil, nil
         return true
     end
-    return Vpn:ensureRoute(Api, home)
+    return Vpn:ensureRoute(Api, home, quiet)
 end
 
 local function mkdirs(path)
@@ -95,7 +99,7 @@ end
 
 --- Sends a chapter's progress; when offline, keeps it pending (sent later).
 local function saveProgress(chapter_id, last_page, is_read)
-    if Api:updateProgress(chapter_id, last_page, is_read) then return true end
+    if Api:updateProgress(chapter_id, last_page, is_read, SAVE_TIMEOUT) then return true end
     local pending = settings:readSetting("pending_progress") or {}
     local key = tostring(chapter_id)
     local previous = pending[key]
@@ -118,7 +122,7 @@ local function flushPendingProgress()
     local pending = settings:readSetting("pending_progress")
     local sent, left = 0, 0
     for key, p in pairs(pending) do
-        if Api:updateProgress(tonumber(key), p.page, p.read or nil) then
+        if Api:updateProgress(tonumber(key), p.page, p.read or nil, SAVE_TIMEOUT) then
             pending[key] = nil
             sent = sent + 1
         else
@@ -213,6 +217,11 @@ local function aheadCount()
     return DEFAULT_AHEAD
 end
 
+--- Number of chapters ready ahead at or below which the Wi-Fi may be woken up to refill the window.
+local function lowCount()
+    return math.max(1, math.floor(aheadCount() / 3))
+end
+
 -- Deletes the series' CBZ files that are no longer in the window [index - KEEP_BEHIND, index + ahead].
 local function cleanup(ctx, index)
     local keep = {}
@@ -240,11 +249,30 @@ local function serverDownloadEnabled()
     return settings:readSetting("server_download") ~= false
 end
 
+-- What the prefetcher needs from the network layer: a cheap "is the Wi-Fi connected?" (NetworkMgr:isOnline() also
+-- resolves a host name, which freezes the screen when the DNS is slow) and the Wi-Fi wake-up.
+local prefetchNetwork = {
+    isOnline = function()
+        if NetworkMgr.isConnected then return NetworkMgr:isConnected() end
+        return NetworkMgr:isOnline()
+    end,
+    enableWifi = function(_self, callback, interactive) return NetworkMgr:enableWifi(callback, interactive) end,
+}
+
+--- Shows why the screen is about to freeze (waking the Wi-Fi up blocks KOReader on some e-readers); returns the
+--- function that hides the message.
+local function showBusy()
+    local message = InfoMessage:new({ text = _("Connecting to Wi-Fi to fetch the next chapters…") })
+    UIManager:show(message)
+    UIManager:forceRePaint()
+    return function() UIManager:close(message) end
+end
+
 -- Prefetching of the next chapters while reading (see suwayomi_prefetch.lua): one download at a time in a
--- subprocess. It wakes the Wi-Fi up itself if it was turned off, and then rechecks the route to Suwayomi
--- (home or VPN tunnel), because the network may have changed.
+-- subprocess. It wakes the Wi-Fi up itself if it was turned off (but only when the chapters ready ahead run low),
+-- and then rechecks the route to Suwayomi (home address or open tunnel), because the network may have changed.
 local prefetcher = Prefetch.new({
-    NetworkMgr = NetworkMgr,
+    NetworkMgr = prefetchNetwork,
     UIManager = UIManager,
     ffiutil = ffiutil,
     lfs = lfs,
@@ -252,6 +280,8 @@ local prefetcher = Prefetch.new({
     chapterPath = chapterPath,
     mkdirs = mkdirs,
     aheadCount = aheadCount,
+    lowCount = lowCount,
+    showBusy = showBusy,
     ensureServer = ensureServer,
     download = function(chapter_id, path) return Api:downloadChapter(chapter_id, path) end,
     hasPendingProgress = hasPendingProgress,

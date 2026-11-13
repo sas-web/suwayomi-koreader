@@ -36,6 +36,7 @@ function Vpn:paths()
         conf = dir .. "/wireproxy.conf",
         pid = dir .. "/wireproxy.pid",
         log = dir .. "/wireproxy.log",
+        home = dir .. "/home_network", -- identity of the home network, learned the first time the server is reached there
     }
 end
 
@@ -180,6 +181,49 @@ function Vpn:localAddress()
     return nil
 end
 
+-- Where the kernel publishes the routing and ARP tables (fields, so that the tests can point to fake files).
+Vpn.route_table = "/proc/net/route"
+Vpn.arp_table = "/proc/net/arp"
+
+--- Identity of the network the device is connected to: "<router address>@<router hardware address>", read from the
+--- kernel's routing and ARP tables (no program to run). Unlike the network's name, which a phone's hotspot or a
+--- repeater can copy, the router's hardware address tells one network from another. Returns nil when it cannot be
+--- read (no default route yet, or the router is not in the ARP table yet).
+function Vpn:networkIdentity()
+    local gateway
+    for line in (readFile(self.route_table) or ""):gmatch("[^\n]+") do
+        local destination, hex = line:match("^%S+%s+(%x+)%s+(%x%x%x%x%x%x%x%x)")
+        if destination == "00000000" and hex ~= "00000000" then -- default route; the address is little-endian hex
+            gateway = table.concat({
+                tonumber(hex:sub(7, 8), 16), tonumber(hex:sub(5, 6), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(1, 2), 16),
+            }, ".")
+            break
+        end
+    end
+    if not gateway then return nil end
+    for line in (readFile(self.arp_table) or ""):gmatch("[^\n]+") do
+        local ip, mac = line:match("^(%d+%.%d+%.%d+%.%d+)%s+%S+%s+%S+%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+        if ip == gateway and mac ~= "00:00:00:00:00:00" then return gateway .. "@" .. mac:lower() end
+    end
+    return nil
+end
+
+--- Identity of the home network, as remembered (nil until the server was reached directly once).
+function Vpn:homeNetwork()
+    local text = readFile(self:paths().home)
+    return text and text:match("^%s*(%S+)") or nil
+end
+
+--- Remembers `identity` as the home network (the server was just reached directly on it).
+function Vpn:rememberHomeNetwork(identity)
+    if not identity or identity == self:homeNetwork() then return end
+    local file = io.open(self:paths().home, "w")
+    if not file then return end
+    file:write(identity, "\n")
+    file:close()
+    logger.info("Suwayomi VPN: home network remembered: " .. identity)
+end
+
 --- Brings the loopback (127.0.0.1) up if it is down. PocketBook's firmware never does it, but its
 --- /etc/sudoers lets the applications' user run /sbin/ifconfig as root without a password: we go through sudo.
 --- Returns true if 127.0.0.1 is usable afterwards, and the output of the commands. Devices whose loopback is
@@ -256,6 +300,8 @@ function Vpn:diagnose()
     end
     table.insert(out, string.format(_("Local addresses: %s"),
         #addresses > 0 and table.concat(addresses, ", ") or _("none")))
+    table.insert(out, string.format(_("Router: %s"), self:networkIdentity() or _("unknown")))
+    table.insert(out, string.format(_("Home router remembered: %s"), self:homeNetwork() or _("none")))
     local text = table.concat(out, "\n")
     logger.info("Suwayomi VPN diagnostic: " .. text:gsub("\n", " | "))
     return text
@@ -330,11 +376,12 @@ end
 
 --- Route to `target_url`, a server at home: its direct address if the device can reach it, otherwise the
 --- local address of the VPN tunnel. `api:ping(url, timeout)` tests whether the server answers at an address.
---- Returns the address to use, or nil and an error message.
-function Vpn:routeTo(api, target_url)
+--- `elsewhere` says that the device is surely not on the home network (a network other than the remembered one):
+--- the direct test is then skipped. Returns the address to use, or nil and an error message.
+function Vpn:routeTo(api, target_url, elsewhere)
     local address = self:localAddress()
     local network = networkOf(address)
-    local maybe_home = Vpn.isOnHomeNetwork(address, target_url:match("^%a+://([^:/]+)"))
+    local maybe_home = not elsewhere and Vpn.isOnHomeNetwork(address, target_url:match("^%a+://([^:/]+)"))
     if maybe_home then
         if api:ping(target_url, 3) then
             logger.info("Suwayomi VPN: " .. target_url .. " reachable directly (network " .. network .. ")")
@@ -355,23 +402,55 @@ end
 
 --- Chooses the route to Suwayomi and sets it on `api`: the local network if the server answers there,
 --- otherwise the VPN tunnel (reused as is while the network does not change and the tunnel answers).
+--- The home network is recognised by its router (see `networkIdentity`), learned the first time the server is
+--- reached directly: on it the tunnel is never used, and on any other network the useless home test is skipped.
+--- With `quiet` (a check made in the background) a new tunnel is never started, since that takes up to 25 seconds
+--- with the screen frozen: only the home address and an already open tunnel are tried, briefly.
 --- Returns true, or false and an error message.
-function Vpn:ensureRoute(api, home_url)
+function Vpn:ensureRoute(api, home_url, quiet)
     api:setServer(home_url)
     local network = networkOf(self:localAddress())
+    local identity = self:networkIdentity()
+    local home = self:homeNetwork()
+    local at_home = identity ~= nil and identity == home                         -- the home network, for sure
+    local elsewhere = identity ~= nil and home ~= nil and identity ~= home       -- another network, for sure
 
     -- Tunnel already open on this same network: reuse it without testing the home server again.
-    if self.active and self.network == network and self:isRunning() and api:ping(self.url, 4) then
+    if not at_home and self.active and self.network == network and self:isRunning()
+        and api:ping(self.url, quiet and 2 or 4) then
         api:setServer(self.url)
         logger.info("Suwayomi VPN: tunnel reused (network " .. network .. ")")
         return true
     end
     self.active, self.url, self.network = false, nil, nil
 
-    local url, err = self:routeTo(api, home_url)
+    if at_home then
+        -- The server is reached directly, never through a tunnel. The network may still be settling after a Wi-Fi
+        -- wake-up, so the address is tried a few times (one try in the background) before giving up.
+        for attempt = 1, (quiet and 1 or 3) do
+            if api:ping(home_url, 2) then
+                self:stop()
+                return true
+            end
+            if attempt < 3 and not quiet then socket.sleep(1) end
+        end
+        return false, _("The server does not answer.")
+    end
+
+    if quiet then
+        if not elsewhere and api:ping(home_url, 2) then
+            self:stop() -- at home: no tunnel needed
+            self:rememberHomeNetwork(identity)
+            return true
+        end
+        return false, _("The server does not answer.")
+    end
+
+    local url, err = self:routeTo(api, home_url, elsewhere)
     if not url then return false, err end
     if url == home_url then
         self:stop() -- back home: the tunnel is no longer needed
+        self:rememberHomeNetwork(identity)
         return true
     end
     self.active, self.url, self.network = true, url, network

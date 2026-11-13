@@ -40,10 +40,18 @@ through a WireGuard server that you run (a router with a WireGuard/VPN server, a
 
 ## How it works
 
-- When the library opens, the plugin looks at the e-reader's address. If it is in the same /24 network as the
-  server (e.g. 192.168.1.x), it tests Suwayomi at its home address (3 s at most); if it answers, nothing else
-  happens (and a tunnel left over is stopped). In another network it skips that test and goes straight to the
-  tunnel.
+- The add-on recognises your home network by its **router**: the router's address and hardware address, read from
+  the kernel's routing and ARP tables (the network's name is not used: a phone's hotspot or a repeater can copy
+  it). The first time Suwayomi is reached directly, that router is remembered (file `suwayomi_vpn/home_network`).
+  On it, the server is always reached directly, never through a tunnel (the address is tried up to three times,
+  since the network may still be settling after the Wi-Fi was woken up). On any other network the useless home
+  test is skipped and the tunnel is used at once. If you change your router, the new one is learned by itself.
+- Until a home network is remembered, or when the router cannot be read, the old rule applies: if the e-reader's
+  address is in the same /24 network as the server (e.g. 192.168.1.x), Suwayomi is tested at its home address
+  (3 s at most); if it answers, nothing else happens (and a tunnel left over is stopped). In another network that
+  test is skipped and the tunnel is used.
+- Checks made in the background (prefetching) never start a tunnel: starting one takes up to 25 seconds with the
+  screen frozen. They only use the home address or a tunnel that is already open.
 - It then starts the tunnel (a second or two, up to ten the first time) and talks to Suwayomi through
   `127.0.0.1:4567`. While the network does not change and the tunnel answers, the next openings reuse it without
   any other test. If the tunnel fails, the home address is still tried before giving up.

@@ -144,14 +144,15 @@ function Api:getChapters(manga_id)
 end
 
 --- Saves a chapter's progress. `last_page` is 0-based, like in Suwayomi.
-function Api:updateProgress(chapter_id, last_page, is_read)
+--- `timeout` (seconds) is how long each answer is awaited: the screen waits for this call at the end of a chapter.
+function Api:updateProgress(chapter_id, last_page, is_read, timeout)
     local patch = { lastPageRead = last_page }
     if is_read then patch.isRead = true end
     local data, err = self:graphql([[
         mutation($id: Int!, $patch: UpdateChapterPatchInput!) {
             updateChapter(input: {id: $id, patch: $patch}) { chapter { id isRead lastPageRead } }
         }
-    ]], { id = chapter_id, patch = patch })
+    ]], { id = chapter_id, patch = patch }, timeout)
     if not data then
         logger.warn("Suwayomi: updateProgress failed:", err)
         return nil, err

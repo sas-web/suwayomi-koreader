@@ -21,9 +21,11 @@ chapters, prefetching of the next ones, and reading progress kept in sync with t
 - **Chapter chaining**: turn the page after the last page and the next chapter opens; go back from page 1 and you
   land on the last page of the previous chapter. After the last chapter of a series you are brought back to the
   library.
-- **Prefetching**: the next chapters (3 by default) are downloaded in the background while you read, and old ones are
-  deleted, so storage stays small. If the e-reader switched its Wi-Fi off, the plugin wakes it up by itself
-  to keep the window of chapters filled.
+- **Prefetching**: the next chapters (6 by default) are downloaded in the background while you read, and old ones are
+  deleted, so storage stays small. If the e-reader switched its Wi-Fi off, the plugin wakes it up by itself, but
+  only when the chapters ready ahead run low (2 or fewer by default), and then fills the whole window in one go:
+  on some e-readers (PocketBook) waking the Wi-Fi up freezes the screen for 5 to 20 seconds, so it is done rarely,
+  and a message says why the screen waits.
 - **Missing chapters are requested from the server**: if Suwayomi has not downloaded a chapter yet, the plugin asks
   it to (the chapter jumps to the front of the server's queue, and the server's download manager is started if it
   was stopped), shows how far it is, and opens the chapter when it is ready. Tap the message to cancel: the server
@@ -89,7 +91,7 @@ is closed):
 | `autostart` | `true` | Open the library when KOReader starts |
 | `chain` | `true` | `false` turns chapter chaining off |
 | `server_download` | `true` | `false` stops the plugin from asking the server to download missing chapters (same as the gear menu line) |
-| `prefetch_ahead` | `3` | Number of following chapters kept on the device (1 to 10) |
+| `prefetch_ahead` | `6` | Number of following chapters kept on the device (1 to 10); the Wi-Fi is woken up when a third of them or fewer are left |
 | `download_dir` | see above | Folder where chapters are stored ("Delete downloaded chapters" only acts on folders named `_Suwayomi` or `suwayomi_downloads`) |
 | `panel_zoom` | `false` | KOReader's panel zoom on long press |
 
