@@ -403,8 +403,16 @@ openChapter = function(ctx, index, start_override, online, asked)
             function()
                 local file, e, c = Api:downloadChapter(chapter.id, path)
                 if not file and c ~= "not_downloaded" then
-                    socket.sleep(1.5) -- try again: the Wi-Fi may have just woken up
-                    file, e, c = Api:downloadChapter(chapter.id, path)
+                    -- The route may be out of date: the Wi-Fi went off and on, maybe on another network, and nothing
+                    -- in the background starts the VPN tunnel. Choose it again (this starts the tunnel if it is
+                    -- needed, with this message on screen), then try again.
+                    socket.sleep(1.5) -- the Wi-Fi may have just woken up
+                    local reachable, route_err = ensureServer()
+                    if reachable then
+                        file, e, c = Api:downloadChapter(chapter.id, path)
+                    else
+                        e = route_err or e
+                    end
                 end
                 return file, e, c
             end)
@@ -509,8 +517,14 @@ local function seriesContext(series)
     local chapters, err = withMessage(_("Loading chapters…"), function()
         local list, e = Api:getChapters(series.id)
         if not list then
-            socket.sleep(1.5) -- try again: the Wi-Fi may have just woken up
-            list, e = Api:getChapters(series.id)
+            -- The route may be out of date (see openChapter): choose it again, then try again.
+            socket.sleep(1.5) -- the Wi-Fi may have just woken up
+            local reachable, route_err = ensureServer()
+            if reachable then
+                list, e = Api:getChapters(series.id)
+            else
+                e = route_err or e
+            end
         end
         return list, e
     end)

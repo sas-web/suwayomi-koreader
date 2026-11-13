@@ -164,6 +164,18 @@ w.calls = {}
 ok = Vpn:ensureRoute(api, HOME, true)
 check("N9 background check with the tunnel already open: reused after a short test", ok and api.server == TUNNEL and calls() == "ping tunnel 2" and w.connects == 1, calls())
 
+-- N9b: a background check reuses a working tunnel even if the Wi-Fi network changed (another hotspot)...
+world("192.168.43.7"); w.reachable[TUNNEL] = true
+Vpn:ensureRoute(api, HOME)
+w.calls = {}; w.address = "172.20.10.2"
+ok = Vpn:ensureRoute(api, HOME, true)
+check("N9b background check, network changed: the working tunnel is reused, no new tunnel",
+    ok and api.server == TUNNEL and calls() == "ping tunnel 2" and w.connects == 1 and Vpn.network == "172.20.10", calls())
+-- ... while an interactive check does not trust it blindly (see S4)
+w.calls = {}; w.address = "10.5.0.9"
+ok = Vpn:ensureRoute(api, HOME)
+check("N9b interactive check, network changed again: goes through connect", ok and calls() == "connect", calls())
+
 -- N10: reading the router's identity from (fake) kernel tables
 local function writeFile(path, text) local f = io.open(path, "w"); f:write(text); f:close() end
 local routes, arps = os.tmpname(), os.tmpname()

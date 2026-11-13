@@ -24,6 +24,9 @@ froze the screen for another 25 s.
   asleep (the progress is kept and sent later).
 - Pending progress no longer wakes the Wi-Fi up by itself: it is sent when the Wi-Fi is on anyway, or when the
   library opens.
+- **Away from home, the VPN tunnel starts when you need it**, with a message on screen: when the library opens, and
+  when loading a series or downloading a chapter fails (the route is chosen again before the second try). Once open,
+  the tunnel stays up and the background prefetching uses it, even if the Wi-Fi network changed.
 
 ### Added (VPN add-on)
 - **The home network is recognised by its router** (address and hardware address read from the kernel, learned the

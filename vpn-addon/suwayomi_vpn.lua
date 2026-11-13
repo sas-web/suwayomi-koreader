@@ -415,10 +415,12 @@ function Vpn:ensureRoute(api, home_url, quiet)
     local at_home = identity ~= nil and identity == home                         -- the home network, for sure
     local elsewhere = identity ~= nil and home ~= nil and identity ~= home       -- another network, for sure
 
-    -- Tunnel already open on this same network: reuse it without testing the home server again.
-    if not at_home and self.active and self.network == network and self:isRunning()
+    -- Tunnel already open on this same network: reuse it without testing the home server again. A background
+    -- check reuses a tunnel that answers even if the network changed (another hotspot): it cannot start a new one.
+    if not at_home and self.active and (quiet or self.network == network) and self:isRunning()
         and api:ping(self.url, quiet and 2 or 4) then
         api:setServer(self.url)
+        self.network = network
         logger.info("Suwayomi VPN: tunnel reused (network " .. network .. ")")
         return true
     end

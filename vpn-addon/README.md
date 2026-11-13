@@ -51,7 +51,9 @@ through a WireGuard server that you run (a router with a WireGuard/VPN server, a
   (3 s at most); if it answers, nothing else happens (and a tunnel left over is stopped). In another network that
   test is skipped and the tunnel is used.
 - Checks made in the background (prefetching) never start a tunnel: starting one takes up to 25 seconds with the
-  screen frozen. They only use the home address or a tunnel that is already open.
+  screen frozen. They only use the home address or a tunnel that is already open (even if the Wi-Fi network changed).
+  Away from home the tunnel is therefore started when you open the library, or when loading a series or downloading
+  a chapter fails; with a message on screen. Once open it stays up until KOReader closes, and prefetching uses it.
 - It then starts the tunnel (a second or two, up to ten the first time) and talks to Suwayomi through
   `127.0.0.1:4567`. While the network does not change and the tunnel answers, the next openings reuse it without
   any other test. If the tunnel fails, the home address is still tried before giving up.
