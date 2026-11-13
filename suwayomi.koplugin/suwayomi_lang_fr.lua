@@ -126,6 +126,8 @@ return {
     ["Router: %s"] = "Routeur : %s",
     ["Home router remembered: %s"] = "Routeur de la maison mémorisé : %s",
     ["unknown"] = "inconnu",
+    ["Tunnel: running for %d min, CPU %.1f s, memory %.0f MB"] = "Tunnel : actif depuis %d min, processeur %.1f s, mémoire %.0f Mo",
+    ["Tunnel: not running"] = "Tunnel : arrêté",
     ["none"] = "aucune",
     ["wireproxy: running"] = "wireproxy : en marche",
     ["wireproxy: stopped"] = "wireproxy : arrêté",

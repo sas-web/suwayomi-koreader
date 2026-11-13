@@ -119,8 +119,10 @@ function Vpn:stop()
     local p = self:paths()
     local pid = readPid(p.pid)
     if pid and lfs.attributes("/proc/" .. pid, "mode") == "directory" then
+        local minutes, cpu, memory = self:usage()
         os.execute("kill " .. pid)
-        logger.info("Suwayomi VPN: tunnel stopped (pid " .. pid .. ")")
+        logger.info(string.format("Suwayomi VPN: tunnel stopped (pid %d)%s", pid, minutes and
+            string.format(" after %d min, CPU %.1f s, memory %.0f MB", minutes, cpu, memory) or ""))
     end
     os.remove(p.pid)
     self.active = false
@@ -179,6 +181,26 @@ function Vpn:localAddress()
         if ip:sub(1, 4) ~= "127." then return ip end
     end
     return nil
+end
+
+Vpn.proc_dir = "/proc" -- a field, so that the tests can point to fake files
+
+--- What the tunnel costs: how long its process has run (minutes), the CPU time it used (seconds) and its memory
+--- (MB), read from /proc. Returns nil when it is not running.
+function Vpn:usage()
+    local pid = readPid(self:paths().pid)
+    if not pid then return nil end
+    local stat = readFile(self.proc_dir .. "/" .. pid .. "/stat")
+    local after = stat and stat:match("^.*%)%s+(.*)$") -- what follows the process name (in parentheses: the last one)
+    if not after then return nil end
+    local fields = {}
+    for field in after:gmatch("%S+") do fields[#fields + 1] = field end
+    local ticks = 100 -- clock ticks per second (USER_HZ), 100 on Linux
+    local cpu = ((tonumber(fields[12]) or 0) + (tonumber(fields[13]) or 0)) / ticks -- utime + stime
+    local started = (tonumber(fields[20]) or 0) / ticks -- seconds after boot
+    local uptime = tonumber((readFile(self.proc_dir .. "/uptime") or ""):match("^(%d+%.?%d*)")) or started
+    local memory = (tonumber((readFile(self.proc_dir .. "/" .. pid .. "/status") or ""):match("VmRSS:%s*(%d+)")) or 0) / 1024
+    return math.max(0, math.floor((uptime - started) / 60)), cpu, memory
 end
 
 -- Where the kernel publishes the routing and ARP tables (fields, so that the tests can point to fake files).
@@ -302,6 +324,9 @@ function Vpn:diagnose()
         #addresses > 0 and table.concat(addresses, ", ") or _("none")))
     table.insert(out, string.format(_("Router: %s"), self:networkIdentity() or _("unknown")))
     table.insert(out, string.format(_("Home router remembered: %s"), self:homeNetwork() or _("none")))
+    local minutes, cpu, memory = self:usage()
+    table.insert(out, minutes and string.format(_("Tunnel: running for %d min, CPU %.1f s, memory %.0f MB"), minutes, cpu, memory)
+        or _("Tunnel: not running"))
     local text = table.concat(out, "\n")
     logger.info("Suwayomi VPN diagnostic: " .. text:gsub("\n", " | "))
     return text

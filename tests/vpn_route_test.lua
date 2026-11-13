@@ -211,6 +211,26 @@ real.remember(Vpn, nil)
 check("N11 an unknown identity is never remembered", real.home(Vpn) == OTHER_NET)
 os.remove(paths_home.home)
 
+-- N12: what the tunnel costs (age, CPU time, memory) is read from /proc
+local fake = os.tmpname(); os.remove(fake); os.execute("mkdir -p '" .. fake .. "/4242'")
+Vpn.proc_dir = fake
+writeFile(fake .. "/uptime", "5000.50 9000.00\n")
+-- stat: pid (name) state ppid pgrp session tty tpgid flags minflt cminflt majflt cmajflt utime stime cutime cstime
+--       priority nice threads itrealvalue starttime ...
+writeFile(fake .. "/4242/stat", "4242 (wire) proxy) S 1 4242 4242 0 -1 4194560 100 0 0 0 1234 567 0 0 20 0 8 0 200000 12345678 3000\n")
+writeFile(fake .. "/4242/status", "Name:\twireproxy\nVmRSS:\t   20480 kB\n")
+writeFile(paths_home.dir .. "/wireproxy.pid", "4242\n")
+local minutes, cpu, memory = Vpn:usage()
+check("N12 age, CPU time and memory of the tunnel (even if the process name holds a parenthesis)",
+    minutes == 50 and math.abs(cpu - 18.01) < 0.001 and memory == 20, tostring(minutes) .. " | " .. tostring(cpu) .. " | " .. tostring(memory))
+os.remove(paths_home.dir .. "/wireproxy.pid")
+check("N12 no pid file: not running", Vpn:usage() == nil)
+writeFile(paths_home.dir .. "/wireproxy.pid", "9999\n")
+check("N12 a process that has no /proc entry: not running", Vpn:usage() == nil)
+os.remove(paths_home.dir .. "/wireproxy.pid")
+Vpn.proc_dir = "/proc"
+os.execute("rm -rf '" .. fake .. "'")
+
 -- T: one tunnel per server in the profile (real tunnelUrl / addTunnel on a fake profile)
 local paths = Vpn:paths()
 os.execute("mkdir -p '" .. paths.dir .. "'")

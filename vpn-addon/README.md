@@ -57,7 +57,10 @@ through a WireGuard server that you run (a router with a WireGuard/VPN server, a
 - It then starts the tunnel (a second or two, up to ten the first time) and talks to Suwayomi through
   `127.0.0.1:4567`. While the network does not change and the tunnel answers, the next openings reuse it without
   any other test. If the tunnel fails, the home address is still tried before giving up.
-- The tunnel is stopped when KOReader closes. Its log is `suwayomi_vpn/wireproxy.log`.
+- The tunnel is stopped when KOReader closes, and when you are back on your home network. Its log is
+  `suwayomi_vpn/wireproxy.log`. It keeps running while the Wi-Fi is off (it just has nothing to send, and WireGuard
+  renegotiates by itself when the Wi-Fi comes back, even on another network); its cost is shown by the network
+  diagnostic and written to KOReader's log when it stops (running time, CPU time, memory).
 - It can be turned off from the same gear menu line, and "Network diagnostic (VPN)" reports the e-reader's
   interfaces and addresses.
 

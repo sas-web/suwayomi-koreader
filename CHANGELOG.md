@@ -32,6 +32,8 @@ froze the screen for another 25 s.
 - **The home network is recognised by its router** (address and hardware address read from the kernel, learned the
   first time the server is reached directly). On it the tunnel is never used, on any other network the home test is
   skipped. The diagnostic shows the router and the remembered home router.
+- **The cost of the tunnel is measured**: the diagnostic, and the log line written when the tunnel stops, show how
+  long it ran and the CPU time and memory it used.
 - Tests for all of it (`prefetch_test.lua`, `vpn_route_test.lua`).
 
 ## v0.1.1 (2026-11-03)
