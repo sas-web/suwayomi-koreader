@@ -175,7 +175,7 @@ local function withMessage(text, fn)
 end
 
 local function showError(text)
-    UIManager:show(InfoMessage:new({ text = text, icon = "notice-warning" }))
+    UIManager:show(InfoMessage:new({ text = text and tostring(text) or "?", icon = "notice-warning" }))
 end
 
 --- Trailer of the error messages: which server was being used.
@@ -529,7 +529,7 @@ local function seriesContext(series)
         return list, e
     end)
     if not chapters then
-        showError(err)
+        showError(tostring(err))
         return nil
     end
     return { series = series, chapters = chapters }
@@ -872,7 +872,7 @@ local function fetchLibrary()
     local series, err = Api:getLibrary()
     if not series then return nil, err end
     local by_manga, latest = Api:getLastRead()
-    if not by_manga then return nil, err end
+    if not by_manga then return nil, latest end -- on failure the second value is the error message
     local library = { series = series, by_manga = by_manga, latest = latest }
     library.categories = Api:getCategories() or {}
 
@@ -1041,7 +1041,7 @@ showLibrary = function()
             return fetchLibrary()
         end)
         if not library then
-            showError(err .. serverFooter())
+            showError(tostring(err) .. serverFooter())
             return
         end
 
@@ -1141,7 +1141,7 @@ function Suwayomi:onSuwayomiResume()
             return fetchLibrary()
         end)
         if not library then
-            showError(err)
+            showError(tostring(err))
             return
         end
         resumeLatest(library)

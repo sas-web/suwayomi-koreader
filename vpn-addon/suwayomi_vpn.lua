@@ -197,10 +197,12 @@ function Vpn:usage()
     for field in after:gmatch("%S+") do fields[#fields + 1] = field end
     local ticks = 100 -- clock ticks per second (USER_HZ), 100 on Linux
     local cpu = ((tonumber(fields[12]) or 0) + (tonumber(fields[13]) or 0)) / ticks -- utime + stime
-    local started = (tonumber(fields[20]) or 0) / ticks -- seconds after boot
-    local uptime = tonumber((readFile(self.proc_dir .. "/uptime") or ""):match("^(%d+%.?%d*)")) or started
+    -- Age: since the pid file was written, i.e. since the tunnel was started. (The kernel's own start time does not
+    -- match /proc/uptime on the e-reader: it gave 0 minutes for a tunnel that had run for 27.)
+    local started = lfs.attributes(self:paths().pid, "modification")
+    local minutes = started and math.max(0, math.floor((os.time() - started) / 60)) or 0
     local memory = (tonumber((readFile(self.proc_dir .. "/" .. pid .. "/status") or ""):match("VmRSS:%s*(%d+)")) or 0) / 1024
-    return math.max(0, math.floor((uptime - started) / 60)), cpu, memory
+    return minutes, cpu, memory
 end
 
 -- Where the kernel publishes the routing and ARP tables (fields, so that the tests can point to fake files).
