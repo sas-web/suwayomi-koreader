@@ -2,19 +2,21 @@
 
 All notable changes to this project. Dates are release dates.
 
-## v0.1.2 (unreleased)
+## v0.1.2 (2026-11-13)
+
+Fixes the screen freezing for 10 to 40 seconds, often at the start of a new chapter, with nothing on screen. The
+cause, found in a log from a real reading session: on PocketBook, waking the Wi-Fi up blocks the whole e-reader until
+the connection is made (4 to 17 s measured), the e-reader turns its Wi-Fi off again within two minutes, so this
+happened for almost every chapter; and a failed home test right after a wake-up could start the VPN tunnel, which
+froze the screen for another 25 s. A second log, taken after the update, showed no more Wi-Fi wake-ups, no save
+time-outs and the chapters prefetched through the VPN tunnel away from home.
 
 ### Fixed
 - **A crash when the library could not be loaded.** If the request for the last-read chapters failed (for example
   right after the Wi-Fi woke up), the library loader returned no error message and the error dialog crashed
   KOReader (`attempt to concatenate local 'err' (a nil value)`, seen when going back to the library after the last
   chapter of a series). The real message is now passed on, and no error dialog can crash on a missing message.
-
-Fixes the screen freezing for 10 to 40 seconds, often at the start of a new chapter, with nothing on screen. The
-cause, found in a log from a real reading session: on PocketBook, waking the Wi-Fi up blocks the whole e-reader until
-the connection is made (4 to 17 s measured), the e-reader turns its Wi-Fi off again within two minutes, so this
-happened for almost every chapter; and a failed home test right after a wake-up could start the VPN tunnel, which
-froze the screen for another 25 s.
+  Reproduced and checked in the emulator; not yet run on the e-reader.
 
 ### Changed
 - **The Wi-Fi is woken up far less often.** Only when the chapters ready ahead run low (a third of the window or
