@@ -124,16 +124,20 @@ function Api:getLastRead()
     return by_manga, latest
 end
 
---- Chapters of a series, oldest first.
+--- Chapters of a series, oldest first. The list also carries `description`, the series' description as the
+--- server has it (see suwayomi_summary.lua): asked for in the same request, to spare a second one.
 function Api:getChapters(manga_id)
     local data, err = self:graphql([[
-        query($id: Int!) { chapters(condition: {mangaId: $id},
-                                    orderBy: SOURCE_ORDER, orderByType: ASC) {
-            nodes { id name chapterNumber sourceOrder isRead lastPageRead lastReadAt pageCount mangaId }
-        } }
+        query($id: Int!) {
+            manga(id: $id) { description }
+            chapters(condition: {mangaId: $id}, orderBy: SOURCE_ORDER, orderByType: ASC) {
+                nodes { id name chapterNumber sourceOrder isRead lastPageRead lastReadAt pageCount mangaId }
+            }
+        }
     ]], { id = manga_id })
     if not data then return nil, err end
     local chapters = data.chapters.nodes
+    chapters.description = type(data.manga) == "table" and data.manga.description or nil
     table.sort(chapters, function(a, b)
         if a.chapterNumber ~= b.chapterNumber then
             return a.chapterNumber < b.chapterNumber

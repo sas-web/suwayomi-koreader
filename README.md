@@ -14,8 +14,8 @@ chapters, prefetching of the next ones, and reading progress kept in sync with t
 
 - **Library** as a cover mosaic (or a list), with Suwayomi's categories as tabs and a badge with the number of
   unread chapters. Opens by itself when KOReader starts (can be turned off).
-- **Series screen** with the cover, your progress and a big *Resume* button that goes straight to the right
-  chapter and page.
+- **Series screen** with the cover, your progress, a big *Resume* button that goes straight to the right
+  chapter and page, and the beginning of the series' summary (tap it to read it all).
 - **Chapters are downloaded as CBZ files** and opened in KOReader's own reader: all its page-turning, zoom and
   display options apply.
 - **Chapter chaining**: turn the page after the last page and the next chapter opens; go back from page 1 and you
@@ -48,7 +48,8 @@ chapters, prefetching of the next ones, and reading progress kept in sync with t
   the KOReader emulator (v2025.10) against a fake server, and with the unit tests in `tests/`. It has not been
   tried on other devices yet. It should work elsewhere, since the code only uses KOReader's own APIs (plus the
   optional PocketBook-specific loopback trick of the VPN add-on): bug reports are welcome.
-- A Suwayomi server reachable from the e-reader, using its GraphQL API (developed against v2.4.2366).
+- A Suwayomi server reachable from the e-reader, using its GraphQL API (developed against v2.4.2366, also used with
+  v2.4.2373).
 - **The chapters are read from the Suwayomi server's downloads.** The plugin asks Suwayomi for the CBZ file of a
   chapter, and Suwayomi refuses chapters it has not downloaded. For those, the plugin asks the server to download
   them (see above), which only works if the server can reach the source. Turning on automatic download of new

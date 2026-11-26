@@ -2,6 +2,32 @@
 
 All notable changes to this project. Dates are release dates.
 
+## v0.1.3 (2026-11-26)
+
+The series screen now shows what a series is about.
+
+### Added
+- **A summary on the series screen**, flowing around the cover (beside it under the title, then across the whole
+  width below it): the beginning of the description Suwayomi has for the series. Tap it to read all of it. It comes
+  with the chapter list, in the same request. The blocks that sources add after the story (associated names,
+  trackers, related series), Markdown links and HTML are removed (`suwayomi_summary.lua`, tested by
+  `tests/summary_test.lua`). It is left out when a series has no description, or when fewer than about three lines
+  would fit.
+
+### Changed
+- On the series screen, to make room for the summary, the buttons moved to the bottom of the screen, and the reading
+  progress (unread chapters, last chapter read, total) is now a single line under them (in a smaller font when it is
+  long, wrapped only if even that does not fit).
+
+### How it was checked
+Unit tests (the 20 new ones on the summary cleanup, and the previous ones). The KOReader emulator at the InkPad X
+resolution against a fake server: short and very long titles, French with large chapter numbers, a short summary, a
+series without one, and taps on the summary and the buttons. The new request and the cleanup against a real Suwayomi
+v2.4.2373 server (read-only; the descriptions of its 70 library series all come out clean, none empty). Then the new
+series screen on the author's e-reader (PocketBook InkPad X, KOReader v2026.07.2). The text wrapping relies on how
+KOReader's text box records where its lines start (`vertical_string_list`), which is the same in the emulator's
+version (v2025.10) and in v2026.07.2.
+
 ## v0.1.2 (2026-11-13)
 
 Fixes the screen freezing for 10 to 40 seconds, often at the start of a new chapter, with nothing on screen. The

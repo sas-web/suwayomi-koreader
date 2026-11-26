@@ -10,6 +10,7 @@ local InputDialog = require("ui/widget/inputdialog")
 local LuaSettings = require("luasettings")
 local Menu = require("ui/widget/menu")
 local NetworkMgr = require("ui/network/manager")
+local TextViewer = require("ui/widget/textviewer")
 local UIManager = require("ui/uimanager")
 local ffiutil = require("ffi/util")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -23,6 +24,7 @@ local Prefetch = require("suwayomi_prefetch")
 local Reader = require("suwayomi_reader")
 local SeriesView = require("suwayomi_series")
 local ServerDownload = require("suwayomi_serverdl")
+local Summary = require("suwayomi_summary")
 local _ = require("suwayomi_i18n")
 
 -- KOReader's own catalogue: only for the generic words it already translates in every language.
@@ -673,12 +675,18 @@ local function showSeriesOnline(series, open_list)
             (page > 1 and string.format(_(", page %d"), page) or "")
     end
 
+    local summary = Summary.clean(ctx.chapters.description)
+
     if series_view then UIManager:close(series_view) end
     series_view = SeriesView:new({
         series = series,
-        info_text = table.concat(info, "\n"),
+        info_text = table.concat(info, "  |  "),
         resume_text = resume_text,
         chapters_text = _("All chapters"),
+        summary_text = Summary.compact(summary),
+        on_summary = function()
+            UIManager:show(TextViewer:new({ title = series.title, text = summary }))
+        end,
         on_resume = function() if target then openChapter(ctx, start) end end,
         on_chapters = function() showChapterList(ctx, start) end,
         on_close = function() series_view = nil end,
